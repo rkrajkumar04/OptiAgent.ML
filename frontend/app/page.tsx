@@ -284,6 +284,31 @@ const API = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
 export default function DashboardPage() {
   const [viewMode, setViewMode] = useState<'landing' | 'app'>('landing');
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
+
+  const logoutAndClearCaches = () => {
+    setIsLoggedIn(false);
+    if (typeof window !== 'undefined') {
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith('optima_') || key === 'userEmail') {
+          localStorage.removeItem(key);
+        }
+      });
+    }
+    setViewMode('landing');
+    setCurrentStep(1);
+    setProgressValue(0);
+    setProjectId(null);
+    setRuns([]);
+    setIsOptimizing(false);
+    setFile(null);
+    setProjectName('');
+    setCsvHeaders([]);
+    setTotalRows(0);
+    setFileSize(0);
+    setTargetColumn('');
+    setCorrHeatmap(null);
+    setUserStats(null);
+  };
   // Stepper State Machine (1 to 5)
   const [currentStep, setCurrentStep] = useState<number>(1);
   const [progressValue, setProgressValue] = useState<number>(0);
@@ -459,6 +484,33 @@ export default function DashboardPage() {
 
   const handleResetSession = () => {
     setViewMode('landing');
+    setProjectId(null);
+    setRuns([]);
+    setIsOptimizing(false);
+    setFile(null);
+    setProjectName('');
+    setCsvHeaders([]);
+    setTotalRows(0);
+    setFileSize(0);
+    setTargetColumn('');
+    setCorrHeatmap(null);
+    setCurrentStep(1);
+    setProgressValue(0);
+    try {
+      localStorage.removeItem('optima_projectId');
+      localStorage.removeItem('optima_projectName');
+      localStorage.removeItem('optima_csvHeaders');
+      localStorage.removeItem('optima_totalRows');
+      localStorage.removeItem('optima_fileSize');
+      localStorage.removeItem('optima_targetColumn');
+      localStorage.removeItem('optima_corrHeatmap');
+      localStorage.removeItem('optima_isOptimizing');
+      localStorage.setItem('optima_currentStep', '1');
+      localStorage.setItem('optima_progressValue', '0');
+    } catch (e) {}
+  };
+
+  const handleBackToUpload = () => {
     setProjectId(null);
     setRuns([]);
     setIsOptimizing(false);
@@ -710,9 +762,20 @@ export default function DashboardPage() {
   const parseLocalCSV = (selectedFile: File) => {
     setFile(selectedFile);
     setFileSize(selectedFile.size);
-    if (!projectName) {
-      setProjectName(selectedFile.name.replace(/\.[^/.]+$/, ""));
-    }
+    setProjectName(selectedFile.name.replace(/\.[^/.]+$/, ""));
+    setTargetColumn('');
+    setProjectId(null);
+    setRuns([]);
+    setCorrHeatmap(null);
+    try {
+      localStorage.removeItem('optima_projectId');
+      localStorage.removeItem('optima_projectName');
+      localStorage.removeItem('optima_targetColumn');
+      localStorage.removeItem('optima_corrHeatmap');
+      localStorage.removeItem('optima_isOptimizing');
+      localStorage.setItem('optima_currentStep', '1');
+      localStorage.setItem('optima_progressValue', '0');
+    } catch (e) {}
 
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -730,6 +793,17 @@ export default function DashboardPage() {
   // ── Load Demo Dataset ────────────────────────────────────────────────────
   const handleLoadDemo = () => {
     setProjectName("Demo Fraud Detection");
+    setTargetColumn("Fraud");
+    setProjectId(null);
+    setRuns([]);
+    setCorrHeatmap(null);
+    try {
+      localStorage.removeItem('optima_projectId');
+      localStorage.removeItem('optima_projectName');
+      localStorage.removeItem('optima_corrHeatmap');
+      localStorage.removeItem('optima_isOptimizing');
+      localStorage.setItem('optima_targetColumn', 'Fraud');
+    } catch (e) {}
     setFileSize(2300000); // 2.3 MB
     setTotalRows(15234);
     setCsvHeaders([
@@ -1003,7 +1077,13 @@ export default function DashboardPage() {
       {viewMode === 'landing' ? (
         <LandingPage
           isLoggedIn={isLoggedIn}
-          setIsLoggedIn={setIsLoggedIn}
+          setIsLoggedIn={(val) => {
+            if (!val) {
+              logoutAndClearCaches();
+            } else {
+              setIsLoggedIn(val);
+            }
+          }}
           onLaunchApp={(tab) => {
             setViewMode('app');
             if (tab) setHeaderTab(tab);
@@ -1657,8 +1737,7 @@ export default function DashboardPage() {
                   <div style={{ display: 'flex', gap: '12px', marginTop: '10px' }}>
                     <button
                       onClick={() => {
-                        setCurrentStep(1);
-                        setProgressValue(0);
+                        handleBackToUpload();
                       }}
                       style={{
                         padding: '14px', flex: 1, borderRadius: '8px',
