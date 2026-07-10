@@ -1,0 +1,1224 @@
+======================================================================
+                 OPTIMA ML AGENT - STUDY & LEARNING NOTES
+======================================================================
+
+----------------------------------------------------------------------
+DAY 1: PROJECT ENVIRONMENT SETUP & PYTHON FUNDAMENTALS
+----------------------------------------------------------------------
+
+1. What is a Virtual Environment (venv)?
+-----------------------------------------
+* In Python, libraries are installed globally on your system by default.
+* The Problem: Different projects might require different versions of the
+  same library (e.g., FastAPI v0.100 vs. FastAPI v0.111), leading to version
+  clashes.
+* The Solution: A virtual environment (venv) is an isolated folder inside
+  your project directory. It contains its own self-contained copy of Python
+  and package installers. Packages installed here do not affect your global
+  computer or other projects.
+* Commands to create:
+  $ python3 -m venv venv
+
+2. Dependency Management (requirements.txt)
+--------------------------------------------
+* requirements.txt is a standard text file listing every external package
+  your project needs.
+* It guarantees reproducibility: anyone downloading your code can run a single
+  command to install the exact same versions:
+  $ venv/bin/pip install -r requirements.txt
+
+3. Text Classification vs. Numeric Regression
+----------------------------------------------
+To test our general-purpose AutoML agent, we created two different types
+of machine learning datasets:
+* Spam Dataset (Text Classification):
+  - Predicts categories/labels (e.g., "spam" vs. "ham").
+  - Requires text preprocessing (removing punctuation, lowercasing) and
+    TF-IDF Vectorization (converting words into numbers).
+* Weather Dataset (Numeric Regression):
+  - Predicts continuous numeric values (e.g., temperature).
+  - Requires numeric data scaling/normalization.
+
+4. Python 3.13 & Compatibility Wheels
+--------------------------------------
+* Python 3.13 is the newest release. Older, strictly pinned libraries
+  (like scikit-learn==1.5.0) do not have precompiled binary files ("wheels")
+  for Python 3.13.
+* When wheels are missing, pip tries to compile packages from C source code.
+  If your machine is missing compiler tools (like setuptools providing pkg_resources
+  and wheel), the installation crashes.
+* Solution: Upgrade pip, setuptools, and wheel, and relax version pins to
+  let pip fetch the latest compatible compiled binaries.
+
+
+----------------------------------------------------------------------
+DAY 2: BACKEND INFRASTRUCTURE & SQL DATABASES
+----------------------------------------------------------------------
+
+1. What is SQLite?
+------------------
+* SQLite is a lightweight, serverless relational database engine.
+* Instead of running a heavy cloud database (like Supabase) or local server,
+  SQLite stores all tables in a single local file (e.g., "optima_agent.db")
+  inside your project folder.
+* It is completely free, secure, fast, and works offline.
+
+2. Database Core Mechanics (Connections & Cursors)
+--------------------------------------------------
+* sqlite3.connect("optima_agent.db"):
+  Establishes a bridge between Python and the database file. If the file
+  does not exist, Python automatically creates it.
+* row_factory = sqlite3.Row:
+  Changes how query results are formatted. Instead of returning values in
+  indexes like row[0], Row allows us to access data like a dictionary:
+  project["name"]. This prevents indexing bugs.
+* Connection vs. Cursor:
+  - Connection: The pipeline/bridge to the database.
+  - Cursor: The "pen" that writes, runs, and executes SQL commands.
+* conn.commit():
+  Saves/writes the queries executed by the cursor permanently to the disk.
+* conn.close():
+  Closes the pipeline to free up the computer's memory.
+
+3. Database Schema Tables
+-------------------------
+* projects: Stores user projects, CSV paths, target columns, and task types.
+* agent_runs: Stores history of every optimization run (model trained, metrics, code).
+* settings: Stores private configurations like Gemini API keys.
+
+4. FastAPI Routing & Server Architecture
+----------------------------------------
+* FastAPI is a high-performance Python web framework for building APIs.
+* Routing maps a URL endpoint (like "/api/projects/upload") to a Python function.
+* HTTP Methods:
+  - GET: Used to retrieve data from the backend database (e.g., listing projects).
+  - POST: Used to send data or files to the backend to create records or run tasks.
+* BackgroundTasks:
+  - ML training is computationally heavy and causes timeouts if run synchronously.
+  - BackgroundTasks allows FastAPI to send an immediate "started" response to the
+    browser, while continuing to train models silently in a background thread.
+
+5. MLflow Tracking & Script Execution
+-------------------------------------
+* MLflow UI is a local dashboard that lists all historical runs, metrics, and models.
+* It saves all experiments locally in a folder named "mlruns/".
+* To launch the UI, we run: mlflow ui --port 5000.
+* On macOS, port 5000 is used by AirPlay receiver. Our helper script check if port 5000
+  is free using sockets before launching the process.
+
+
+----------------------------------------------------------------------
+DAY 3: EXPERIMENT TRACKING & PROCESS MANAGEMENT
+----------------------------------------------------------------------
+
+1. What are Network Ports & Port Clashes?
+-----------------------------------------
+* A port is a numerical "gate" that a computer program uses to listen to web
+  traffic (e.g., port 8000 for FastAPI, port 5000 for MLflow).
+* Only one program can listen to a port at a time. If another program attempts
+  to open on a busy port, it crashes with "Address already in use".
+* Apple AirPlay Receiver uses port 5000 on macOS by default, which clashes
+  with MLflow's default port.
+
+2. Port Checking with Socket Library
+-------------------------------------
+* Python's socket library can check if a port is busy:
+  socket.socket(socket.AF_INET, socket.SOCK_STREAM) -> Creates a TCP socket.
+  connect_ex(('127.0.0.1', 5000)) -> Tries to connect to the port.
+  - Returns 0: Connection successful, meaning the port is occupied.
+  - Returns non-zero: Connection failed, meaning the port is free.
+
+3. Subprocesses: Blocking vs. Non-blocking
+-------------------------------------------
+* subprocess.run():
+  - Blocking execution.
+  - Pauses the parent Python script until the child terminal command finishes.
+* subprocess.Popen():
+  - Non-blocking execution.
+  - Spawns the terminal process in the background and immediately continues
+    running the parent Python script.
+  - We use Popen for servers (like MLflow) so we can start them and monitor
+    them without freezing our script.
+
+
+----------------------------------------------------------------------
+DAY 4: THE CODE EXECUTION SANDBOX
+----------------------------------------------------------------------
+
+1. What is Sandboxed Code Execution?
+------------------------------------
+* The AI Agent dynamically writes Python code. We cannot run this code directly
+  inside our FastAPI server.
+* If the code contains syntax errors, runtime crashes, or infinite loops, running
+  it inside the main server would crash the entire API.
+* Sandboxing isolates the agent's code inside a separate operating system process
+  called a subprocess.
+
+2. Subprocess Execution Mechanics
+---------------------------------
+We write the code to a temporary file (e.g., "runs/run_xxx.py") and execute it:
+* sys.executable:
+  Specifies the path to the current running Python binary (inside our "venv").
+  This ensures the sandbox runs with the same packages (scikit-learn, pandas).
+* stdout=subprocess.PIPE:
+  Captures standard console prints (e.g., Accuracy metric printouts).
+* stderr=subprocess.PIPE:
+  Captures exceptions and tracebacks. This traceback is sent back to Gemini
+  as feedback for self-debugging.
+* timeout:
+  Kills the script if execution exceeds a set duration (e.g., 45 seconds),
+  guarding against infinite loops.
+
+
+----------------------------------------------------------------------
+DAY 5: SANDBOX UNIT TESTING
+----------------------------------------------------------------------
+
+1. What is Sandbox Unit Testing?
+--------------------------------
+* Unit testing verifies that our sandboxed subprocess executor behaves correctly
+  under positive (successful runs) and negative (crashing/looping scripts) scenarios.
+* The test script uses Python's built-in assert statement to ensure keys like
+  "success", "exit_code", and "stderr" return exact matches.
+
+2. Testing Scenarios:
+---------------------
+* Scenario A (Clean Code):
+  - Expected: success=True, exit_code=0, stdout contains the print statement.
+* Scenario B (Crashes):
+  - Expected: success=False, exit_code!=0, stderr contains the traceback error
+    name (like "ZeroDivisionError").
+* Scenario C (Infinite Loops/Timeouts):
+  - Expected: success=False, exit_code=-1, stderr contains the custom timeout
+    error string, and the script is terminated within the specified duration limit.
+
+
+----------------------------------------------------------------------
+DAY 8: GOOGLE GEMINI API CONFIGURATION
+----------------------------------------------------------------------
+
+1. The Gemini API SDK
+---------------------
+* We use Google's official "google-generativeai" library to interface with
+  Gemini models in Python.
+* Setting API keys is done via: genai.configure(api_key="YOUR_KEY").
+
+2. Forcing Structured JSON Outputs
+----------------------------------
+* Normal LLM calls return conversational text. For automated software agents,
+  we must enforce a strict data structure.
+* By passing GenerationConfig(response_mime_type="application/json"), we configure
+  the Gemini engine to output a pure JSON string.
+* This allows Python's json.loads() to instantly parse the agent's thought streams
+  and code blocks without regex filters.
+
+
+----------------------------------------------------------------------
+DAY 9: SYSTEM PROMPT ENGINEERING & AGENT RECONSTRUCT
+----------------------------------------------------------------------
+
+1. What is System Prompt Engineering?
+-------------------------------------
+* A System Prompt acts as the "Operating System" or base personality for an AI agent.
+* It defines the agent's persona (e.g., Senior Data Scientist), details its operational boundaries, and instructs it on how to handle input data and constraints.
+* In OptiAgentML, the prompt dynamically injects project-specific variables such as:
+  - Dataset Path ({data_path})
+  - Target Column ({target_column})
+  - Task Type ({task_type})
+
+2. Designing the ReAct Loop System
+----------------------------------
+* The agent operates under a Reason-then-Action (ReAct) cycle:
+  - THOUGHT: The agent reasons about its next move based on dataset details or feedback from previous executions.
+  - ACTION: The action taken (e.g., run_code, finish).
+  - CODE: The actual Python code to execute in the sandbox.
+* The system prompt enforces a structured JSON structure containing: "thought", "action", and "code".
+
+3. Standardizing Sandbox Output & MLflow Logging
+-----------------------------------------------
+* The generated code must execute silently in our sandbox, save a model file locally (best_model.pkl), and print execution results as JSON.
+* Every code trial is tracked automatically in MLflow. This requires:
+  - Importing mlflow and mlflow.sklearn.
+  - Creating/logging metrics (e.g. Accuracy/F1 for classification, RMSE/R2 for regression).
+  - Saving and logging the trained estimator in MLflow for experiment tracking and reproducibility.
+
+
+----------------------------------------------------------------------
+DAY 10: THE REACT AGENT LOOP & SQL RUN LOGGING
+----------------------------------------------------------------------
+
+1. Maintaining Chat Session History
+-----------------------------------
+* A core requirement of ReAct loops is history persistence: the agent must remember
+  past decisions (successes, compiler warnings, syntax errors) to self-optimize.
+* We utilize Gemini's start_chat() SDK object which maintains the alternation of
+  messages (user input -> model response) dynamically, ensuring a clean history.
+
+2. Executing dynamically-generated Code
+---------------------------------------
+* At each iteration, the agent decides on an action:
+  - If action == 'run_code': the orchestrator writes the python code to disk,
+    runs it inside the isolated subprocess sandbox, and captures output logs.
+  - If action == 'finish': the loop exits successfully.
+
+3. Extracting and Parsing Sandbox Outputs
+-----------------------------------------
+* The sandboxed script is instructed to print a final JSON metadata line to stdout.
+* The loop scans the execution output line-by-line looking for valid curly-braced
+  JSON dictionaries.
+* Upon identification, it extracts:
+  - Validation metrics (accuracy, f1-score, rmse, r2)
+  - Selected model estimator type (e.g. Random Forest, SVM)
+  - Model hyperparameters
+  - MLflow unique run ID
+
+4. Storing Multi-Trial History in SQLite
+---------------------------------------
+* To feed the visual Next.js frontend, each loop iteration logs database entries
+  in our sqlite3 table 'agent_runs'.
+* Saved fields include: project_id, run_number, model_name, hyperparameters, 
+  metric values, standard output/error console prints, and the localized model path (.pkl).
+* If a code run crashes, the stderr traceback is logged in the db and fed back
+  to the agent to prompt self-correction on the next iteration.
+
+
+----------------------------------------------------------------------
+DAY 11: ROBUST PARSING & COMPILER ERROR FEEDBACK LOOPS
+----------------------------------------------------------------------
+
+1. Extracting JSON with Markdown wrappers
+-----------------------------------------
+* LLMs occasionally enclose their JSON objects inside markdown backticks (e.g. ```json ... ```).
+* We implement clean_and_parse_json() using regular expression replacements to strip these syntax blocks.
+* We locate the actual JSON boundaries using start_idx = text.find('{') and end_idx = text.rfind('}'), isolating the inner dictionary structure before passing it to json.loads(). This handles extra conversational prefixes or suffixes.
+
+2. Sandboxed Failure Categorization & Feedback Prompts
+------------------------------------------------------
+* If code execution fails, our feedback loop standardizes responses based on sandbox execution outcomes:
+  - Timeout: Informs the model that it generated an infinite loop or excessive computation, prompting it to reduce search space or training cycles.
+  - Runtime/Compile Crash: Extracts the stderr Python stack trace and relays it back to the agent as developer-level feedback.
+  - Missing Outputs: Handles the case where the code executed cleanly (exit code 0) but failed to output the expected metrics JSON block to stdout. It prompts the model with instructions on formatting print statements.
+
+
+----------------------------------------------------------------------
+DAY 12: THE API KEY ROTATION POOL & QUOTA SAFETY
+----------------------------------------------------------------------
+
+1. Quota Constraints & Rate-Limiting (HTTP 429)
+-----------------------------------------------
+* Free API access tokens are subject to strict limits, such as a cap on Requests Per Minute (RPM) or Requests Per Day (RPD).
+* In iterative ReAct agent cycles, rapid back-to-back LLM calls trigger rate-limit exceptions (ResourceExhausted status 429), terminating runs prematurely.
+
+2. Architecture of the ApiKeyRotator
+------------------------------------
+* The rotator class connects to our SQLite database to pull all saved API key strings.
+* It exposes a wrapper function execute_with_rotation(func, *args, **kwargs).
+* This runs the passed generative SDK method. If it encounters a ResourceExhausted exception:
+  1. Cycles the current active key index (current_index = (current_index + 1) % pool_size).
+  2. Updates global configurations using genai.configure(api_key=new_key).
+  3. Retries the execution up to a maximum index cycle count.
+  4. Implements a cooldown sleep duration backoff (e.g. 15 seconds) if all keys are temporarily exhausted.
+
+
+----------------------------------------------------------------------
+DAY 13: FASTAPI BACKGROUNDTASKS INTEGRATION
+----------------------------------------------------------------------
+
+1. Asynchronous Execution with BackgroundTasks
+----------------------------------------------
+* Running iterative, compute-heavy machine learning optimization loops inside synchronous HTTP requests blocks the server's main thread, causing 504 Gateway Timeouts.
+* FastAPI's BackgroundTasks allows a route to return an immediate response to the client (e.g. status code 202/200 confirming the optimization was triggered) and then execute the long-running agent loop function on a separate worker thread.
+
+2. SQLite Multi-Threaded Database Safety
+---------------------------------------
+* By default, SQLite database files raise operational errors ("database is locked") when accessed concurrently from multiple threads.
+* We configure sqlite3.connect() with timeout=30.0. This instructs the SQLite driver to wait for up to 30 seconds for the database file to unlock before throwing an exception, allowing background threads to write metrics safely alongside frontend read queries.
+
+
+----------------------------------------------------------------------
+DAY 14: WEEK 2 GRADUATION & API INTEGRATION TESTING
+----------------------------------------------------------------------
+
+1. Purpose of End-to-End Integration Testing
+--------------------------------------------
+* Integration testing verifies that isolated software modules (API routes, databases, sandbox executors, prompt builders, key rotators) communicate correctly under a single unified lifecycle.
+* By writing a dedicated verification script (test_integration.py), we simulate a full production AutoML optimization cycle.
+
+2. Sandbox Self-Correction & Debugging in Practice
+--------------------------------------------------
+* During integration testing, we observed the ReAct agent loops handling real-world runtime states:
+  - Iteration 1: The agent generated complex feature transformations and model definitions that triggered a subprocess timeout (exceeding 45s).
+  - Feedback Loop: The sandbox terminated the run, and the system prompt returned a custom timeout warn traceback to Gemini.
+  - Iteration 2: Gemini successfully parsed the warning, reasoned about the bottleneck, reduced features (max_features = 2000), and completed execution with 0.75 accuracy.
+  - Iteration 3: The agent noted class imbalance (precision 1.0 vs recall 0.5), adjusted hyperparameters (class_weight='balanced'), and achieved 1.0 accuracy, saving the final pkl model file.
+
+
+----------------------------------------------------------------------
+DAY 15: NEXT.JS FRONTEND DASHBOARD LAYOUT & DESIGN TOKENS
+----------------------------------------------------------------------
+
+1. Establishing Premium CSS Design Tokens
+-----------------------------------------
+* To build a modern, high-fidelity UI dashboard, we define custom CSS variables under :root inside globals.css.
+* Colors: A primary deep dark base (#060813), HSL gradient animations, electric teal (#00f2fe) and cyber purple (#9b51e0) glows.
+* Fonts: Import 'Outfit' (for headings/layout UI) and 'JetBrains Mono' (for code/console UI) from Google Fonts to replace default browser typography.
+* Glassmorphism variables: Implement frosted glass panel utilities using backdrop-filter blur (16px), semitransparent borders (border-glass), and custom neon dropshadow drops.
+
+2. Creating the Page Grid & Layout Structure
+-------------------------------------------
+* Next.js App Router follows a layout/page directory hierarchy.
+* layout.tsx acts as the global wrapper loading globals.css and configuring the page's SEO metadata.
+* page.tsx sets up the responsive layout grid:
+  - Header: Displays name and backend online status indicator using a pulsing ring indicator.
+  - Left Column: Form containers for project dataset file uploads and feature definitions.
+  - Right Column: Terminal panel representing the thought stream console, and cards presenting the experiment leaderboard.
+
+
+----------------------------------------------------------------------
+DAY 16: REACT MULTIPART UPLOADS & SEQUENTIAL TRIGGERS
+----------------------------------------------------------------------
+
+1. Interactive Drag-and-Drop & File State
+------------------------------------------
+* Standard file inputs are replaced by custom drag-and-drop containers in React.
+* By listening to mouse drag events (onDragOver, onDragLeave, onDrop) we control active board glows and store the select handle inside component state (file, setFile).
+
+2. Multipart Form-Data (FormData) Stream requests
+-------------------------------------------------
+* Files cannot be sent as standard JSON payloads. We instantiate a JavaScript FormData object:
+  const formData = new FormData()
+* We append textual parameters (project name, target variable, task type) along with the raw file pointer, and dispatch a POST request. The browser automatically appends boundary markers and configures the multipart/form-data header.
+
+3. Two-Step Submission Execution
+--------------------------------
+* When clicking Submit, the page conducts two sequential operations:
+  1. Calls /api/projects/upload with the FormData payload, saving the dataset and generating a database project ID.
+  2. Calls /api/projects/{id}/optimize, triggering the backend ReAct agent loop in a separate thread.
+* Inputs are locked and button displays process loaders during flight to preserve quality user experience.
+
+
+----------------------------------------------------------------------
+DAY 17: BACKEND LIFECYCLE, CSV VALIDATION & EDA FOUNDATION
+----------------------------------------------------------------------
+
+1. Why We Moved Backend First
+-----------------------------
+* To make OptiAgentML reliable and free-tier friendly, the backend must own the
+  deterministic ML workflow instead of asking Gemini to generate every step.
+* Gemini should become the strategy/explanation layer, while backend modules handle
+  validation, EDA, preprocessing, training, metrics, and best-model selection.
+* Today's work started that transition by adding backend-owned dataset analysis and
+  run lifecycle tracking without deleting the older Gemini sandbox loop.
+
+2. Safe Database Schema Upgrade
+-------------------------------
+* Updated backend/database/connection.py with non-breaking SQLite migrations.
+* New project metadata fields:
+  - row_count
+  - column_count
+  - metadata_json
+  - eda_summary
+  - current_status
+  - last_error
+  - updated_at
+* New agent_runs lifecycle fields:
+  - status
+  - thought
+  - action
+  - error_message
+  - started_at
+  - completed_at
+* Added a new agent_events table for timeline/status/thought stream events.
+* The migration checks whether each column exists before adding it, so existing
+  local projects and previous agent runs are preserved.
+
+3. CSV Validation and EDA Module
+--------------------------------
+* Added backend/ml/eda.py as the first deterministic ML automation module.
+* It validates:
+  - CSV readability
+  - non-empty dataset
+  - target column existence
+  - at least one feature column
+  - numeric target requirement for regression
+* It generates an EDA summary containing:
+  - row/column counts
+  - feature count
+  - missing value totals
+  - duplicate row count
+  - per-column dtype, role, missing percent, unique count
+  - target distribution or target stats
+  - classification warnings when target cardinality looks suspicious
+
+4. Upload Route Improvement
+---------------------------
+* Updated /api/projects/upload so uploads now:
+  1. validate project name, target column, task type, and CSV extension
+  2. prevent duplicate project names before saving a file
+  3. save uploaded CSV with a safer unique filename
+  4. run backend EDA immediately after upload
+  5. store metadata_json and eda_summary in SQLite
+  6. create an agent_events record for the upload event
+
+5. Frontend-Ready Backend Endpoints
+-----------------------------------
+* Added project detail endpoint:
+  GET /api/projects/{project_id}
+* Added project lifecycle endpoint:
+  GET /api/projects/{project_id}/status
+* Added timeline/thought stream endpoint:
+  GET /api/projects/{project_id}/events
+* Added best model endpoint:
+  GET /api/projects/{project_id}/best-run
+* Updated missing project errors from non-standard 444 to standard 404.
+
+6. Agent Loop Status Logging
+----------------------------
+* The existing Gemini ReAct loop now updates project status:
+  - queued
+  - running
+  - completed
+  - failed
+* It logs timeline events for:
+  - optimization queued
+  - optimization started
+  - iteration started
+  - agent thought/action
+  - sandbox execution
+  - run recorded
+  - parse/API/database errors
+  - optimization completed/failed
+* Each generated-code run stores status, thought, action, and error_message in
+  agent_runs, making it easier for the frontend to display progress and failures.
+
+7. Verification
+---------------
+* Ran Python compile checks for:
+  - backend/main.py
+  - backend/database/connection.py
+  - backend/ml/eda.py
+  - backend/agent/loop.py
+* Ran backend/database/connection.py to apply safe SQLite migrations.
+* No old backend files or model artifacts were deleted.
+
+
+----------------------------------------------------------------------
+DAY 18: DETERMINISTIC BACKEND AUTOML ENGINE
+----------------------------------------------------------------------
+
+1. Why This Step Matters
+------------------------
+* The project direction is now:
+  - Core ML automation = backend code
+  - Gemini = strategy and explanation layer
+* This reduces dependence on free Gemini API quota and makes OptiAgentML usable
+  even when Gemini keys are rate-limited.
+* The older Gemini sandbox loop remains in the project, but we added a safer
+  backend-owned training path.
+
+2. New ML Automation Modules
+----------------------------
+* Added backend/ml/preprocessing.py:
+  - detects numeric, categorical, and text feature columns
+  - builds sklearn ColumnTransformer preprocessing pipelines
+  - uses median imputation + scaling for numeric columns
+  - uses most-frequent imputation + one-hot encoding for categorical columns
+  - uses TF-IDF vectorization for text columns
+* Added backend/ml/metrics.py:
+  - classification metrics: accuracy, f1_score, precision, recall
+  - regression metrics: rmse, mae, r2_score
+  - primary metric selection: accuracy for classification, rmse for regression
+* Added backend/ml/trainer.py:
+  - handles train/test split
+  - label-encodes classification targets
+  - trains candidate sklearn models
+  - returns model pipelines plus metrics
+* Added backend/ml/automl.py:
+  - runs backend-owned AutoML for a project
+  - saves trained pipelines as .pkl model artifacts
+  - writes each model trial to agent_runs
+  - logs timeline events to agent_events
+  - updates project lifecycle status
+
+3. Candidate Models
+-------------------
+* Classification:
+  - Logistic Regression
+  - Linear SVC
+  - Random Forest Classifier for non-text datasets
+  - Gradient Boosting Classifier for non-text datasets
+* Regression:
+  - Ridge Regression
+  - Random Forest Regressor for non-text datasets
+  - Linear Regression for non-text datasets
+  - Gradient Boosting Regressor for non-text datasets
+* Text datasets avoid tree/boosting models over sparse TF-IDF features to keep
+  execution fast for local/free-tier demos.
+
+4. New Backend Endpoint
+-----------------------
+* Added:
+  POST /api/projects/{project_id}/automl
+* This endpoint queues backend AutoML through FastAPI BackgroundTasks.
+* It is separate from:
+  POST /api/projects/{project_id}/optimize
+* Meaning:
+  - /automl = deterministic backend trainer
+  - /optimize = older Gemini-generated-code loop
+
+5. SQLite Lock Fix
+------------------
+* During smoke testing, backend AutoML exposed a real SQLite issue:
+  - a model run insert held a write transaction
+  - agent event logging opened a second connection
+  - SQLite raised "database is locked"
+* Fixed by committing and closing the agent_runs insert connection before writing
+  each agent_events record.
+
+6. Smoke Test Results
+---------------------
+* Ran backend AutoML on existing project 1: SMS Spam Classifier Test.
+  - Logistic Regression accuracy: 1.0
+  - Linear SVC accuracy: 1.0
+  - Best selected model: Logistic Regression / Linear SVC tie at 1.0 accuracy
+* Ran backend AutoML on existing project 2: Weather Test.
+  - Ridge Regression rmse: 0.4280
+  - Random Forest Regressor rmse: 2.1474
+  - Linear Regression rmse: 0.4698
+  - Gradient Boosting Regressor rmse: 1.7800
+  - Best selected model: Ridge Regression
+* The smoke test created new agent_runs records and saved new model artifacts
+  under backend/uploads/models/.
+
+7. Existing Project Metadata Backfill
+-------------------------------------
+* The first two projects were created before Day 17 EDA storage existed.
+* Backfilled row_count, column_count, metadata_json, and eda_summary for existing
+  projects using their saved CSV paths.
+
+8. Verification Notes
+---------------------
+* Python compile checks passed for:
+  - backend/main.py
+  - backend/ml/preprocessing.py
+  - backend/ml/metrics.py
+  - backend/ml/trainer.py
+  - backend/ml/automl.py
+* Direct endpoint-function checks worked for status, best-run, and events.
+* FastAPI TestClient could not be used because the current venv does not have
+  httpx2 installed. No new package was installed.
+* Importing backend/main.py shows a FutureWarning that google-generativeai is
+  deprecated; the older Gemini loop still uses that package and should be migrated
+  later to google.genai.
+
+
+----------------------------------------------------------------------
+DAY 19: DASHBOARD INSIGHTS API & FREE EXPLANATION FALLBACK
+----------------------------------------------------------------------
+
+1. Why We Added an Insights Layer
+---------------------------------
+* The frontend needs one clean payload for project detail pages instead of calling
+  many endpoints separately.
+* We also need a free explanation fallback so the app can explain results even
+  when Gemini free-tier keys are rate-limited.
+* This continues the architecture:
+  - Backend owns deterministic ML workflow
+  - Gemini can later improve the explanation, but is not required
+
+2. New backend/ml/insights.py Module
+------------------------------------
+* Added deterministic insight generation.
+* It reads:
+  - project metadata
+  - EDA summary
+  - model run history
+  - best model
+* It returns:
+  - summary text
+  - observations
+  - recommendations
+  - best model reference
+  - run counts
+* Example insights:
+  - dataset size
+  - detected feature profile
+  - missing value status
+  - target unique count
+  - best model and metric
+  - task-specific recommendations
+
+3. New Frontend-Friendly Endpoints
+----------------------------------
+* Added:
+  GET /api/projects/{project_id}/insights
+* Added:
+  GET /api/projects/{project_id}/dashboard
+* /dashboard returns one combined payload:
+  - project
+  - runs
+  - events
+  - best_run
+  - insights
+* This is useful for the future Next.js dashboard because one request can hydrate
+  the main project view.
+
+4. Small Route Cleanup
+----------------------
+* Added a helper to consistently parse agent_events.payload JSON.
+* Reused this helper in both the events endpoint and the dashboard endpoint.
+
+5. Verification
+---------------
+* Python compile checks passed for:
+  - backend/main.py
+  - backend/ml/insights.py
+* Direct backend function checks passed for:
+  - get_project_dashboard(1)
+  - get_project_dashboard(2)
+  - get_project_insights(1)
+* Current best models:
+  - SMS Spam Classifier Test: Linear SVC with accuracy = 1.0
+  - Weather Test: Ridge Regression with rmse = 0.4280
+* The old google-generativeai FutureWarning still appears only because main.py
+  imports the older Gemini loop. The new insights module itself does not call Gemini.
+
+----------------------------------------------------------------------
+DAY 18: NEXT.JS MULTI-PAGE ROUTING, GLOBAL LAYOUT & SETTINGS PAGE
+----------------------------------------------------------------------
+
+1. Next.js App Router — File-Based Routing
+-------------------------------------------
+* In Next.js 14 App Router, routes are created by placing a page.tsx
+  inside a folder under the app/ directory. No configuration needed.
+
+  Folder structure → URL mapping:
+    app/page.tsx              →  http://localhost:3000/
+    app/dashboard/page.tsx    →  http://localhost:3000/dashboard
+    app/experiments/page.tsx  →  http://localhost:3000/experiments
+    app/settings/page.tsx     →  http://localhost:3000/settings
+
+* Next.js automatically discovers these routes at build/dev time.
+  You never need to edit a router config file.
+
+2. Global Layout with layout.tsx
+----------------------------------
+* app/layout.tsx is the ROOT layout — it wraps EVERY page in the app.
+* The {children} prop inside layout.tsx renders the current page content.
+* This is the correct place to put:
+    - The top navigation bar (so it appears on every page)
+    - The footer
+    - Global font imports
+    - Global CSS (globals.css is imported here)
+
+  Example layout.tsx structure:
+    export default function RootLayout({ children }) {
+      return (
+        <html>
+          <body>
+            <Navbar />         ← appears on ALL pages
+            {children}         ← each page renders here
+            <Footer />         ← appears on ALL pages
+          </body>
+        </html>
+      )
+    }
+
+3. Client Components vs Server Components
+------------------------------------------
+* By default in App Router, all components are SERVER components.
+  - They run on the server, cannot use useState, useEffect, or browser APIs.
+  - They are faster (no JS sent to client for them).
+
+* To make a component a CLIENT component:
+  - Add 'use client' as the very first line of the file.
+  - This enables React hooks (useState, useEffect, useRef etc.)
+  - This enables browser APIs (window, document, localStorage etc.)
+
+  Rule of thumb:
+    - Data display with no interactivity → Server Component (no 'use client')
+    - Buttons, forms, polls, animations → Client Component ('use client')
+
+4. Next.js <Link> Component
+-----------------------------
+* Always use <Link href="/dashboard"> instead of <a href="/dashboard">
+  for internal navigation.
+
+* Why? <Link> does CLIENT-SIDE navigation:
+  - Only fetches the new page's JavaScript bundle
+  - Does NOT reload the full browser page
+  - Is significantly faster — feels like a SPA (Single Page App)
+  - Also prefetches linked pages in the background automatically
+
+  Example:
+    import Link from 'next/link';
+    <Link href="/dashboard">Go to Dashboard</Link>
+
+5. API Key Security Pattern
+-----------------------------
+* API keys (like Gemini keys) should NEVER be stored in:
+  - localStorage (exposed to JavaScript, XSS vulnerable)
+  - Frontend state / React useState (lost on reload)
+  - URL parameters (visible in browser history)
+
+* Correct pattern used in OptiAgentML:
+  1. User pastes key into a frontend form
+  2. Frontend sends key via POST to the backend API
+  3. Backend stores key in SQLite database (server-side only)
+  4. Backend responds with {configured: true, count: N} — NEVER the key itself
+  5. Future requests read the key from the database on the server
+
+6. Polling vs WebSockets
+--------------------------
+* OptiAgentML frontend uses POLLING to get live experiment updates:
+  - setInterval(() => fetchRuns(), 3000) — checks every 3 seconds
+  - Simple to implement, works with any HTTP backend
+  - Downside: slight delay (up to 3s lag), extra HTTP requests
+
+* Alternative (future upgrade): WebSockets
+  - Backend pushes updates to frontend instantly
+  - No polling loop needed
+  - More complex to set up (requires ws:// protocol upgrade)
+  - Better for real-time apps at scale
+
+7. Pages Built on Day 18
+--------------------------
+  /dashboard    → Project overview cards (glassmorphic)
+                  Fetches: GET /api/projects
+                  Shows: name, task type, status, best score, run buttons
+
+  /experiments  → Full run history leaderboard across ALL projects
+                  Fetches: GET /api/projects + GET /api/projects/{id}/runs
+                  Shows: all models ranked by score across experiments
+
+  /settings     → Gemini API key manager
+                  Fetches: GET /api/settings/keys
+                  Posts:   POST /api/settings/keys
+                  Shows: key count, connection test, masked key input
+
+  layout.tsx    → Global nav bar + footer
+                  Nav: OptiAgentML logo + links + API badge + Deploy button
+                  Footer: OPTIAGENT AI + links + status indicator
+
+
+----------------------------------------------------------------------
+DAY 19: MODELS REGISTRY, FILE DOWNLOADS & PREDICTIVE PLAYGROUND
+----------------------------------------------------------------------
+
+1. Model Serialization & Storage
+----------------------------------
+* Scikit-learn pipelines are serialized locally into binary files using
+  the joblib library (e.g., joblib.dump(pipeline, model_path)).
+* The SQLite database table (agent_runs) tracks the exact absolute file
+  system path in the 'model_path' column.
+
+2. Browser File Downloads in FastAPI
+-------------------------------------
+* To serve a model file for local user download, the backend retrieves
+  the file path and returns it wrapped in FastAPI's FileResponse.
+* Setting media_type="application/octet-stream" tells the browser to
+  treat the payload as raw binary data, and passing the filename parameter
+  forces the browser to open a "Save File" dialog instead of loading it.
+
+3. Dynamic Frontend Form Generation
+-------------------------------------
+* Rather than hardcoding forms, the models playground reads the project's
+  dataset structure stored in database 'eda_summary.columns' schema.
+* Column roles mapped dynamically:
+    - Numeric ➔ <input type="number">
+    - Boolean ➔ <select> (True/False dropdown)
+    - Text/Categorical ➔ standard <input type="text">
+* This enables the same playground to adapt instantly to any tabular dataset.
+
+4. Local Sandboxed Predictions
+--------------------------------
+* When users submit test values in the playground, the backend loads the
+  saved model using joblib.load(model_path).
+* The input JSON dict is parsed, converted to matching Python types (float/str),
+  and fed into a 1-row Pandas DataFrame ensuring all columns match the original.
+* pipeline.predict(df) evaluates the input locally, returning the result.
+* Classification models support predict_proba(df), allowing us to return
+  individual class confidences to render as visual confidence bars.
+
+5. Pages Built on Day 19
+--------------------------
+  /models ➔ Catalog grid of all saved pipelines.
+            Provides download functionality.
+            Features sliding "Obsidian Command" Prediction Playground panel.
+
+
+----------------------------------------------------------------------
+DAY 20: RUN DETAILS INSPECTOR & DYNAMIC FEATURE IMPORTANCES
+----------------------------------------------------------------------
+
+1. Transformed vs Original Feature Mapping
+--------------------------------------------
+* Preprocessors (One-Hot Encoders, Scalers, Imputers) expand columns
+  (e.g., categorical__Sex_female, numeric__Age).
+* To retrieve feature importances, the ColumnTransformer exposes
+  preprocessor.get_feature_names_out() which maps index positions to
+  transformed names.
+* By splitting names by the transformer delimiter ('__') and cross-referencing
+  with the original CSV columns array, we aggregate expanded indicator weights
+  back to original parent feature columns.
+
+2. Model Weight Extraction Rationale
+--------------------------------------
+* Random Forests/Gradient Boosting models expose tree-node splits via
+  estimator.feature_importances_.
+* Linear estimators (Logistic Regression, Ridge, SVM) expose parameter
+  slopes via estimator.coef_.
+* For multi-class linear classifiers (where coef_ is a 2D matrix of shape
+  [n_classes, n_features]), we take the absolute mean of weights across
+  classes to determine absolute column impact: np.mean(np.abs(coef_), axis=0).
+
+3. Normalizing Feature Influence
+..................................
+* Coefficients and tree splits have different scales.
+* To make them visually consistent, we sum absolute weights and divide
+  each by the sum (v / total_w) to normalize the influence scores.
+* This renders cleanly as 0-100% influence bars inside the frontend layout.
+
+4. Pages Upgraded on Day 20
+-----------------------------
+  /experiments ➔ List leaderboard trial rows are now clickable.
+                 Clicking opens right-side "Run Inspector Drawer".
+                 Drawers render:
+                   - Detailed Precision/Recall or MSE/R2 grid cards
+                   - Feature influence influence telemetry bars
+                   - Configured hyperparameter JSON code block
+                   - AI Agent reasoning thought block
+
+
+----------------------------------------------------------------------
+DAY 21: MODEL PACKAGING, ZIP EXPORTS & SAFE DELETION
+----------------------------------------------------------------------
+
+1. Model Packaging (.zip archives)
+------------------------------------
+* Serving raw model files (.pkl) is insufficient for production. Users need
+  the code that wraps it.
+* Today we introduced dynamic zip packaging:
+    - Creates a temp folder inside uploads/exports/.
+    - Copies the .pkl model binary.
+    - Generates a custom predict.py template prepopulated with example
+      input fields parsed from the dataset's eda_summary columns.
+    - Generates a README.md detailing library requirements (pandas,
+      scikit-learn, joblib) and CLI execution guidelines.
+    - Compresses the directory into a .zip folder via shutil.make_archive.
+
+2. FastAPI Response Cleanup Pattern
+-------------------------------------
+* Creating temporary folders and zip files on the server can quickly clog
+  disk space if they aren't deleted.
+* Solution: FastAPI's BackgroundTasks runner is configured to trigger
+  os.remove(zip_archive_path) in the background *after* the FileResponse
+  finishes sending the payload to the browser.
+* The temporary folder itself is cleaned up immediately via shutil.rmtree(temp_dir)
+  once the zip file is constructed.
+
+3. Model Deletion Security
+----------------------------
+* To clean up unused/old experiments:
+    - DELETE /api/models/{run_id} finds the model_path in the database.
+    - Deletes the .pkl binary file from disk via os.remove(model_path) if it exists.
+    - Deletes the corresponding database run record from SQLite agent_runs.
+* Using double-layered try/except structures ensures that database records
+  are still successfully cleaned even if the physical file was already missing
+  from disk.
+
+  /models ➔ Added red Trash "🗑️" delete button to card header.
+           Added "📦 Export" button next to "💾 Download" actions.
+           Alert confirmation dialog protects against accidental deletion.
+
+
+----------------------------------------------------------------------
+DAY 22: GEMINI AI INSIGHTS DATA SCIENCE ENGINE
+----------------------------------------------------------------------
+
+1. Context Aggregation for LLMs
+---------------------------------
+* To generate accurate insights, we must aggregate information from multiple
+  SQLite tables and pass it as a single structured prompt.
+* Context passed to Gemini includes:
+    - Target column name & Machine Learning task type (classification/regression).
+    - Profile statistics: Row/column counts, missing total count, duplicate row counts.
+    - Dataset features list: Names of all columns and their inferred roles.
+    - Full trial leaderboard: Sorted list of completed runs showing model names,
+      hyperparameters, metrics, and agent thoughts.
+
+2. API Key Rotation for Analytics
+----------------------------------
+* Generating extensive markdown reports consumes multiple prompt tokens.
+* By routing the generate_content call through the ApiKeyRotator wrapper
+  (rotator.execute_with_rotation(run_call)), we ensure the application
+  bypasses rate limit ceilings (HTTP 429) if multiple users trigger insights
+  at the same time.
+
+3. Frontend Markdown Parsing
+-----------------------------
+* Gemini returns a raw markdown string containing headers (###), bold tags (**),
+  and lists (-).
+* Rather than pulling a large, heavy npm markdown parser, we built a lightweight
+  React component (MarkdownRenderer) in the dashboard:
+    - Splits content by newline.
+    - Identifies line headers (#, ##, ###) and converts to styled HTML tags.
+    - Detects list bullet points and maps to inline dots.
+    - Uses regular expression replacements to convert **bold text** to styled <strong>
+      tags, and `code blocks` to monospace spans.
+
+  /dashboard ➔ Added "💡 AI Insights" button on completed project cards.
+               Pulsing loading skeleton renders while Gemini reviews the runs.
+               Drawer slides in from the right to display the data scientist analysis.
+
+
+----------------------------------------------------------------------
+DAY 23: MLFLOW INTEGRATION & EXPERIMENT DIAGNOSTICS
+----------------------------------------------------------------------
+
+1. Asynchronous MLflow Session Tracking
+-----------------------------------------
+* Set connection context via mlflow.set_tracking_uri("http://127.0.0.1:5000").
+* Organizes runs logically by grouping them under mlflow.set_experiment(project_name).
+* Within the training loop, context wrappers (with mlflow.start_run()) handle
+  automatic session boundaries, logging parameter key-value pairs, scoring
+  metric values, and tracking the unique mlflow_run_id for persistence inside SQLite.
+
+2. Headless Diagnostic Visualizations
+--------------------------------------
+* FastAPI server runs run in multi-threaded asynchronous contexts. Generating charts
+  must not initialize GUI windows (which throw OS/display errors).
+* We configure Matplotlib to run in headless non-interactive mode:
+  import matplotlib
+  matplotlib.use('Agg')
+* Generated visual assets include:
+    - Classification: confusion_matrix.png using sklearn's ConfusionMatrixDisplay
+      rendered against the validation holdout split.
+    - Regression: residuals_plot.png (scatter chart mapping Actual - Predicted residual
+      variance against the zero line).
+* Files are written to OS temp folders, pushed via mlflow.log_artifact(plot_path),
+  and immediately cleaned up via os.remove() to optimize disk space.
+
+3. Frontend Direct Deep-Linking
+--------------------------------
+* MLflow UI routes direct runs details via hash URL structures:
+  http://localhost:5000/#/runs/{mlflow_run_id}
+* This eliminates the need to query experiment indexes client-side.
+* We integrated stop-propagation onClick hooks to prevent listing row click triggers
+  from opening the default slide-out telemetry drawer when users click "📊 View"
+  inside the table column.
+
+  /experiments ➔ Added "MLflow" status column inside history leaderboard tables.
+                 Added "📊 View Run in MLflow" button inside Run details drawers.
+
+
+----------------------------------------------------------------------
+DAY 24: MODEL DRIFT & QUALITY VALIDATION ALARMS
+----------------------------------------------------------------------
+
+1. Quality Baselines and Threshold Rules
+-----------------------------------------
+* Set connection context rules for early anomaly detection:
+    - Classification: Alarm triggers if Accuracy < 65% or F1-Score < 65%.
+    - Regression: Alarm triggers if R2 Score < 10%.
+* These checks execute dynamically during AutoML evaluation on the validation split.
+
+2. Schema-Free SQLite JSON Storage Strategy
+---------------------------------------------
+* Adding columns to production databases is risky and requires migration scripts.
+* Solution: We store validation alarms inside the pre-existing JSON `logs`
+  text column alongside metric outputs.
+* Under-performing models are flagged with a `"validation_alarm": "Alarm text"`
+  key inside this dictionary.
+* Logging subqueries:
+    - SELECT p.*, (SELECT COUNT(*) FROM agent_runs WHERE project_id = p.id AND logs LIKE '%validation_alarm%') as alarm_count
+  This aggregates alarms dynamically and returns a `has_alarm = True` boolean flag
+  without modifying table definitions.
+* Warning events are simultaneously logged as dedicated rows in the `agent_events`
+  history logs using the type `"validation_alarm"`.
+
+3. Frontend Warning Indicators
+--------------------------------
+* Dashboard: Cards show a glowing warning badge `⚠️ Alarm` next to the status dot.
+* Experiments table: The score cell maps `run.logs` and displays a red `⚠️` warning
+  sign if validation baselines fail.
+* Details Drawer: Renders a dedicated alert callout explaining the F1 or R2 drop,
+  advising on noise reduction or overfitting check solutions.
+
+  /dashboard ➔ Neon-red glowing warning badges added to project lists.
+  /experiments ➔ Row warning icon overlays and details drawer alert cards implemented.
+
+
+----------------------------------------------------------------------
+DAY 25: INTEGRATION VERIFICATION & ALARMS AUDIT TESTING
+----------------------------------------------------------------------
+
+1. Noisy Dataset Simulation
+----------------------------
+* To verify model quality thresholds, we programmatically construct an extreme
+  uncorrelated dataset in test_alarms.py:
+    - 100 rows, 3 features containing random numbers from standard normal distributions.
+    - A target variable comprising randomly generated binary categories (0 or 1).
+* Machine Learning models trained on this split achieve only random chance
+  accuracies (~50.0% to 55.0%), guaranteeing they trip the 65.0% validation ceiling.
+
+2. Synced Process Audit
+------------------------
+* Invoking run_backend_automl(project_id) synchronously inside the test script
+  allows us to verify SQLite insert queries and MLflow server fallback handlers
+  during live execution.
+* Audit outcomes confirmed:
+    - 4 candidate model pipelines trained (Logistic Regression, Linear SVC, Random Forest,
+      Gradient Boosting).
+    - All 4 models logged a validation_alarm status string inside the logs column.
+    - SQLite validation_alarm event counts in agent_events registered exactly 4 events.
+* Diagnostic outputs verify that the system runs smoothly even if MLflow connections
+  log warnings due to headless server shutdowns, indicating excellent exception handling.
+
+
+----------------------------------------------------------------------
+DAY 26: PRODUCTION BUILD & METADATA PURGE OPTIMIZATION
+----------------------------------------------------------------------
+
+1. Database Metadata Purging
+-----------------------------
+* Cleaned up dummy testing projects (such as 'Noisy Alarm Test') and their
+  cascade-dependent rows from optima_agent.db database tables.
+* Orphans clean-up query:
+  DELETE FROM agent_runs WHERE project_id NOT IN (SELECT id FROM projects)
+  This guarantees that delete operations don't leave residual metrics logs in
+  the database, optimizing metadata scans.
+
+2. Production Compile Audits
+-----------------------------
+* Reviewed all modified Next.js pages (/dashboard, /experiments, /models, /settings)
+  for production build readiness:
+    - Resolved TypeScript interface typings (e.g. including has_alarm in Project,
+      mlflow_run_id in Run and RunDetails).
+    - Verified strict import scopes (Next.js Link tags, React useCallback scopes).
+    - Ensured zero static rendering blocks remain.
+* Performance check of backend main modules completed, confirming zero debug
+  bottlenecks or console logging lags in API endpoint routes.
+
+
+----------------------------------------------------------------------
+DAY 27: PRODUCTION DEPLOYMENT & DOCUMENTATION
+----------------------------------------------------------------------
+
+1. Deployment Guide Design (DEPLOYMENT.md)
+-------------------------------------------
+* To ensure seamless system handoffs, we authored DEPLOYMENT.md in the root directory.
+* The guide documents configuration parameters and dependency setups:
+    - Node.js environment requirements (v18+) for Next.js.
+    - Python environment requirements (v3.10+) for uvicorn/FastAPI.
+    - Environment variables (.env template) mapping key rotator configurations.
+
+2. Services Startup Hierarchy
+------------------------------
+* We defined the specific start order of services to prevent connection crashes:
+    1. MLflow Tracking Server (port 5000) ➔ must launch first so MLflow runs can
+       register immediately during training.
+    2. FastAPI Backend Server (port 8000) ➔ reads DB metadata and contacts MLflow.
+    3. Next.js Frontend Server (port 3000) ➔ compiles production bundles and serves UI.
+
+* Outlined a step-by-step verification checklist:
+    - API connection tests (validating key rotation setups).
+    - End-to-end model training runs.
+    - MLflow direct navigation redirects.
+    - Gemini AI insights drawer generations.
+
+
+----------------------------------------------------------------------
+DAY 28: ROADMAP COMPLETION & FINAL HANDOFF
+----------------------------------------------------------------------
+
+1. Final Handoff Manual (walkthrough.md)
+----------------------------------------
+* Formulated the final technical walkthrough manual documenting:
+    - Database layout: schema attributes of projects, agent_runs,
+      agent_events, and settings tables.
+    - Code directory mappings of backend services and frontend pages.
+    - Full list of FastAPI endpoints mapping routes to database queries.
+
+2. Project Completion Summary
+-----------------------------
+* Completed the 28-day engineering roadmap:
+    - Deterministic AutoML training (classification & regression).
+    - ReAct optimization agent with auto-debugging.
+    - Rotating Gemini API key pool for rate limits bypass.
+    - Glassmorphic Obsidian Command interface with watermarks.
+    - Prediction Playground drawer for dynamic model evaluation.
+    - Feature Influence telemetry mapping.
+    - Zip models packaging containing CLI scripts.
+    - Local MLflow server logs with auto-generated charts.
+    - Gemini AI analytics insights report engine.
+    - Validation alarms monitoring poor performance.
+    - Deployment guides.
+* Project successfully completed and ready for production launch!
+
+
+
+
+SUMMARY OF THE PROJECT :
+
+Imagine you want to bake the perfect cake, but you don't know the exact recipe, oven temperature, or ingredient ratios. Instead of baking 100 cakes one-by-one by hand (which takes days), you use a smart robot kitchen helper. You just dump in the ingredients, and the robot immediately bakes 5 different cakes using different recipes at the same time, ranks them by taste, tells you which one won, and packages the exact recipe for you.
+
+OptiAgentML is that smart robot helper—but for data science and AI.
+
+Here is what it does in simple terms:
+
+1. The Core Problem It Solves
+Normally, if a programmer wants to teach a computer to predict something (like predicting House Prices based on square footage, or predicting if a Customer will leave a company based on their usage), they have to write hundreds of lines of code, test many different mathematical models, and guess the best parameters.
+
+OptiAgentML automates this entire process.
+
+2. How a User Uses It (Step-by-Step)
+Step 1: Upload a Spreadsheet (CSV) You upload any standard spreadsheet. For example, a list of credit card transactions where some are marked as "Fraud" and some are "Safe".
+Step 2: Choose Your Target You tell the system: "I want to predict the column named Fraud."
+Step 3: Run AutoML You click "Run AutoML". Behind the scenes, the system automatically trains multiple machine learning models (like Logistic Regression, Decision Trees, and Random Forests) to see which one is the most accurate at predicting fraud.
+Step 4: Check the Leaderboard You get a ranked leaderboard showing which mathematical model won (e.g. "Random Forest got 98% accuracy!").
+Step 5: Test in the Playground You click a button and a panel slides out. You can type in dummy data (e.g. transaction amount = $5000, location = unknown) and click "Predict" to see if the model flags it as fraud in real-time.
+Step 6: Export the Model Once you are happy, you can download the model as a .zip package. It contains the model file and a simple Python file. You can take this zip to any other computer and use it immediately.
+
+3. The "Smart" Features We Added
+💡 Gemini AI Insights: If your model accuracy is low, Gemini acts as your virtual Senior Data Scientist. It reads your leaderboard results and writes a custom report explaining why the models did poorly and what features you should change in your data to make it better.
+⚠️ Validation Alarms: If a model trains but gets less than 65% accuracy, the system triggers a flashing Alarm badge. This warns you that the model is unreliable.
+📊 MLflow Connection: Automatically draws diagnostic charts (like Confusion Matrices showing true vs. false predictions) so you don't have to code them.
+In short, it is a complete, automated studio that takes raw data and turns it into a working, tested, and optimized AI predictor in a few clicks.
+
+
+----------------------------------------------------------------------
+DAY 28 ADDENDUM: FIGMA STEPPER FLOW & DESIGN SYSTEM INTEGRATION
+----------------------------------------------------------------------
+
+1. Interactive Stepper State Machine
+------------------------------------
+* Converted the divided layout pages into a unified, state-based stepper pipeline
+  on the home page (page.tsx).
+* Five stages tracked dynamically:
+    - Step 01: Ingest dropzone & demo data loader.
+    - Step 02: Dynamic dataset details card & target column picker grid.
+    - Step 03: AutoML training launcher & real-time training progress bars.
+    - Step 04: Dynamic model leaderboard matching the winner trophy card.
+    - Step 05: Export packages dashboard (ZIP/PKL download handlers).
+
+2. Contextual Leaderboard Sub-Navigation Tabs (Step 04)
+-------------------------------------------------------
+* Kept the user on the home screen layout by loading results inside tabs:
+    - Overview: Leaderboard table & Accuracy Comparison horizontal bars.
+    - Visual Analytics: Feature importance percentages.
+    - Confusion Matrix: 2x2 grid (True Negative, False Positive, False Negative,
+      True Positive) custom color-coded to match classification splits.
+    - Predict: Dynamic feature form, warning check banner, and verdict outcome
+      card explaining decision factors.
+
+3. Style Guide Theme Enforcement
+--------------------------------
+* Hardcoded colors from the official palette image:
+    - Primary: #4F8CFF (Electric Blue)
+    - Secondary: #7C4DFF (Vibrant Indigo)
+    - Tertiary: #22C55E (Sleek Green)
+    - Neutral: #75777F (Slate Gray)
+    - Background: #121214 (Dark Neutral)
+* Re-coded WebGL canvas connection lines and ThreeJS sphere wireframe properties
+  to render using these exact colors, completing a unified product look.
