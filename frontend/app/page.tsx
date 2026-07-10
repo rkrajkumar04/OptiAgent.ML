@@ -887,6 +887,13 @@ export default function DashboardPage() {
     return () => clearInterval(interval);
   }, [isOptimizing, projectId, fetchRuns]);
 
+  // Load runs once on load/mount if we have a project but are not optimizing
+  useEffect(() => {
+    if (projectId && !isOptimizing) {
+      fetchRuns(projectId);
+    }
+  }, [projectId, isOptimizing, fetchRuns]);
+
   // ── Trigger AutoML ───────────────────────────────────────────────────────
   const handleRunAutoML = async () => {
     if (!file) return;

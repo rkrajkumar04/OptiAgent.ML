@@ -31,6 +31,11 @@ class ModelResult:
 
 
 def _candidate_models(task_type: str, has_text: bool):
+    import os
+    is_render = os.environ.get("RENDER") == "true"
+    n_est = 10 if is_render else 50
+    gb_est = 10 if is_render else 40
+
     if task_type == "classification":
         models = [
             ("Logistic Regression", LogisticRegression(max_iter=200, class_weight="balanced")),
@@ -39,8 +44,8 @@ def _candidate_models(task_type: str, has_text: bool):
         if not has_text:
             models.extend(
                 [
-                    ("Random Forest Classifier", RandomForestClassifier(n_estimators=50, max_depth=10, n_jobs=-1, random_state=RANDOM_STATE)),
-                    ("Gradient Boosting Classifier", GradientBoostingClassifier(n_estimators=40, max_depth=4, random_state=RANDOM_STATE)),
+                    ("Random Forest Classifier", RandomForestClassifier(n_estimators=n_est, max_depth=6 if is_render else 10, n_jobs=-1, random_state=RANDOM_STATE)),
+                    ("Gradient Boosting Classifier", GradientBoostingClassifier(n_estimators=gb_est, max_depth=3 if is_render else 4, random_state=RANDOM_STATE)),
                 ]
             )
         return models
@@ -51,9 +56,9 @@ def _candidate_models(task_type: str, has_text: bool):
     if not has_text:
         models.extend(
             [
-                ("Random Forest Regressor", RandomForestRegressor(n_estimators=50, max_depth=10, n_jobs=-1, random_state=RANDOM_STATE)),
+                ("Random Forest Regressor", RandomForestRegressor(n_estimators=n_est, max_depth=6 if is_render else 10, n_jobs=-1, random_state=RANDOM_STATE)),
                 ("Linear Regression", LinearRegression()),
-                ("Gradient Boosting Regressor", GradientBoostingRegressor(n_estimators=40, max_depth=4, random_state=RANDOM_STATE)),
+                ("Gradient Boosting Regressor", GradientBoostingRegressor(n_estimators=gb_est, max_depth=3 if is_render else 4, random_state=RANDOM_STATE)),
             ]
         )
     return models
@@ -126,17 +131,32 @@ def train_candidate_models(csv_path: str, target_column: str, task_type: str, se
     preprocessor = build_preprocessor(roles)
     X_train, X_test, y_train, y_test = _split_data(X, y, task_type)
 
-    # Downsample training inputs if they are too large to speed up training
-    if len(X_train) > 2000:
+    # Check if we are running in the cloud (Render) to trigger hyper-fast execution
+    is_render = os.environ.get("RENDER") == "true"
+    max_train_size = 150 if is_render else 2000
+    max_test_size = 50 if is_render else 1000
+
+    if len(X_train) > max_train_size:
         try:
             stratify = y_train if task_type == "classification" else None
             X_train, _, y_train, _ = train_test_split(
-                X_train, y_train, train_size=2000, random_state=RANDOM_STATE, stratify=stratify
+                X_train, y_train, train_size=max_train_size, random_state=RANDOM_STATE, stratify=stratify
             )
         except Exception:
             # Fallback to random sample without stratification if it fails
             X_train, _, y_train, _ = train_test_split(
-                X_train, y_train, train_size=2000, random_state=RANDOM_STATE, stratify=None
+                X_train, y_train, train_size=max_train_size, random_state=RANDOM_STATE, stratify=None
+            )
+
+    if len(X_test) > max_test_size:
+        try:
+            stratify = y_test if task_type == "classification" else None
+            X_test, _, y_test, _ = train_test_split(
+                X_test, y_test, train_size=max_test_size, random_state=RANDOM_STATE, stratify=stratify
+            )
+        except Exception:
+            X_test, _, y_test, _ = train_test_split(
+                X_test, y_test, train_size=max_test_size, random_state=RANDOM_STATE, stratify=None
             )
 
     # Filter candidate models based on requested selection
