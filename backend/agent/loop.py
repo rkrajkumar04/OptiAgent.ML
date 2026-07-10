@@ -17,7 +17,7 @@ from agent.prompt_templates import get_system_prompt
 from agent.parser import clean_and_parse_json, format_error_feedback
 from agent.rotation import ApiKeyRotator
 
-def run_agent_optimization_loop(project_id: int, max_iterations: int = 5):
+def run_agent_optimization_loop(project_id: int, max_iterations: int = 3):
     """
     Main ReAct loop that manages autonomous code generation, sandbox execution,
     MLflow tracking, and self-debugging database updates.

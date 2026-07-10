@@ -59,6 +59,7 @@ Requirements for the generated Python script:
 Important constraints:
 - DO NOT use any interactive code or code that opens GUI windows (like matplotlib.show()).
 - The script must be completely self-contained (all imports, data loading, preprocessing, model training, evaluation, logging, and saving model must be in the script).
+- Keep hyperparameter searches extremely lightweight (e.g., set n_iter=3 or n_iter=5 in RandomizedSearchCV, or use simple parameter grids) so training takes under 15 seconds.
 - Only return the JSON response format. Do not prepend markdown formatting like ```json ... ``` inside the response value itself, just return raw JSON text.
 """
 
