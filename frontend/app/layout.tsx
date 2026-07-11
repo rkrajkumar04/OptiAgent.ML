@@ -219,9 +219,9 @@ function Footer() {
           { label: 'Terms', path: '/terms' },
           { label: 'Support', path: '/support' }
         ].map(link => (
-          <Link key={link.label} href={link.path} style={{ color: 'inherit', textDecoration: 'none', transition: 'color 0.2s' }}
-            onMouseEnter={e => (e.currentTarget.style.color = 'var(--primary-fixed-dim)')}
-            onMouseLeave={e => (e.currentTarget.style.color = '')}
+          <Link key={link.label} href={link.path} style={{ color: 'rgba(255, 255, 255, 0.6)', textDecoration: 'none', transition: 'color 0.2s' }}
+            onMouseEnter={e => (e.currentTarget.style.color = '#ffffff')}
+            onMouseLeave={e => (e.currentTarget.style.color = 'rgba(255, 255, 255, 0.6)')}
           >{link.label}</Link>
         ))}
       </div>
