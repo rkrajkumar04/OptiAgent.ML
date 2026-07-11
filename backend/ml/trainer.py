@@ -32,7 +32,7 @@ class ModelResult:
 
 def _candidate_models(task_type: str, has_text: bool):
     import os
-    is_render = os.environ.get("RENDER") == "true"
+    is_render = os.environ.get("RENDER") is not None
     n_est = 10 if is_render else 50
     gb_est = 10 if is_render else 40
 
@@ -44,7 +44,7 @@ def _candidate_models(task_type: str, has_text: bool):
         if not has_text:
             models.extend(
                 [
-                    ("Random Forest Classifier", RandomForestClassifier(n_estimators=n_est, max_depth=6 if is_render else 10, n_jobs=-1, random_state=RANDOM_STATE)),
+                    ("Random Forest Classifier", RandomForestClassifier(n_estimators=n_est, max_depth=6 if is_render else 10, n_jobs=1, random_state=RANDOM_STATE)),
                     ("Gradient Boosting Classifier", GradientBoostingClassifier(n_estimators=gb_est, max_depth=3 if is_render else 4, random_state=RANDOM_STATE)),
                 ]
             )
@@ -56,7 +56,7 @@ def _candidate_models(task_type: str, has_text: bool):
     if not has_text:
         models.extend(
             [
-                ("Random Forest Regressor", RandomForestRegressor(n_estimators=n_est, max_depth=6 if is_render else 10, n_jobs=-1, random_state=RANDOM_STATE)),
+                ("Random Forest Regressor", RandomForestRegressor(n_estimators=n_est, max_depth=6 if is_render else 10, n_jobs=1, random_state=RANDOM_STATE)),
                 ("Linear Regression", LinearRegression()),
                 ("Gradient Boosting Regressor", GradientBoostingRegressor(n_estimators=gb_est, max_depth=3 if is_render else 4, random_state=RANDOM_STATE)),
             ]
@@ -132,7 +132,7 @@ def train_candidate_models(csv_path: str, target_column: str, task_type: str, se
     X_train, X_test, y_train, y_test = _split_data(X, y, task_type)
 
     # Check if we are running in the cloud (Render) to trigger hyper-fast execution
-    is_render = os.environ.get("RENDER") == "true"
+    is_render = os.environ.get("RENDER") is not None
     max_train_size = 150 if is_render else 2000
     max_test_size = 50 if is_render else 1000
 
