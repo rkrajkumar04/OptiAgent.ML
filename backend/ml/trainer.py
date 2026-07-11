@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 
 import pandas as pd
@@ -31,7 +32,6 @@ class ModelResult:
 
 
 def _candidate_models(task_type: str, has_text: bool):
-    import os
     is_render = os.environ.get("RENDER") is not None
     n_est = 10 if is_render else 50
     gb_est = 10 if is_render else 40
