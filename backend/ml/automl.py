@@ -44,12 +44,6 @@ def run_backend_automl(project_id: int, selected_models: str = None) -> dict:
         best_model_path = None
         recorded_runs = []
 
-        import mlflow
-        try:
-            mlflow.set_tracking_uri("http://127.0.0.1:5000")
-            mlflow.set_experiment(project["name"])
-        except Exception as e:
-            print(f"⚠️ Failed to connect to MLflow server: {e}")
 
         # Pre-load dataset and split for plot generation
         import pandas as pd
@@ -78,52 +72,7 @@ def run_backend_automl(project_id: int, selected_models: str = None) -> dict:
             model_path = os.path.join(model_dir, model_filename)
             joblib.dump(result.pipeline, model_path)
 
-            # Log to MLflow (Skip entirely on Render to prevent network connection timeouts and speed up execution)
             mlflow_run_id = None
-            if os.environ.get("RENDER") != "true":
-                try:
-                    run_name = f"{result.model_name}_Run_{next_run_number}"
-                    with mlflow.start_run(run_name=run_name) as active_run:
-                        mlflow_run_id = active_run.info.run_id
-                        
-                        # Log parameters
-                        params = {
-                            "model_type": result.model_name,
-                            "task_type": project["task_type"],
-                            "target_column": project["target_column"],
-                        }
-                        if isinstance(result.hyperparameters, dict):
-                            for k, v in result.hyperparameters.items():
-                                if k not in ("metrics", "feature_roles"):
-                                    params[k] = str(v)
-                        mlflow.log_params(params)
-                        
-                        # Log metrics
-                        if isinstance(result.metrics, dict):
-                            for k, v in result.metrics.items():
-                                try:
-                                    mlflow.log_metric(k, float(v))
-                                except Exception:
-                                    pass
-                        
-                        # Generate and log evaluation plot
-                        if X_test_plot is not None and y_test_plot is not None:
-                            y_pred_plot = result.pipeline.predict(X_test_plot)
-                            plot_path = None
-                            if project["task_type"] == "classification":
-                                labels = list(le_plot.classes_) if le_plot else None
-                                plot_path = generate_confusion_matrix_plot(y_test_plot, y_pred_plot, labels=labels)
-                            else:
-                                plot_path = generate_residuals_plot(y_test_plot, y_pred_plot)
-                                
-                            if plot_path and os.path.exists(plot_path):
-                                mlflow.log_artifact(plot_path)
-                                try:
-                                    os.remove(plot_path)
-                                except Exception:
-                                    pass
-                except Exception as e:
-                    print(f"⚠️ Failed to log run to MLflow: {e}")
 
             # Run quality validation thresholds check
             validation_alarm = None

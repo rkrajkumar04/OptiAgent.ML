@@ -27,28 +27,6 @@ Requirements for the generated Python script:
 3. Split the dataset into train and test/validation sets (typically 80/20 split).
 4. Select and train a high-accuracy machine learning model (e.g., Random Forest, Gradient Boosting, XGBoost, or Stacking/Voting Classifier ensembles) suitable for the task type.
 5. Hyperparameter Tuning: Implement a simple hyperparameter search (e.g., randomized grid search) or tune regularization constraints to maximize validation metrics and prevent overfitting.
-6. Track the experiment using MLflow:
-   - Wrap the training, evaluation, and logging within a single MLflow run:
-     ```python
-     import mlflow
-     import mlflow.sklearn
-     
-     mlflow.set_experiment("OptiAgentML_Experiment")
-     with mlflow.start_run():
-         # log hyperparameters
-         mlflow.log_param("model_type", "...")
-         mlflow.log_params(hyperparameters_dict)
-         
-         # train and predict
-         ...
-         
-         # calculate metrics
-         # log metrics (e.g. accuracy, f1_score for classification; rmse, r2 for regression)
-         mlflow.log_metrics(metrics_dict)
-         
-         # log the model
-         mlflow.sklearn.log_model(model, "model")
-     ```
 6. Save the final trained model file as 'best_model.pkl' in the current working directory using pickle or joblib.
 7. Print a JSON string at the end of the script execution to stdout so the orchestrator can parse it and feed it back to you. The printed output should format the results like:
    ```json
